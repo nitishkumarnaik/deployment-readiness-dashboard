@@ -1,0 +1,41 @@
+// DAX measures for building the same dashboard in Power BI
+// Model: Sites[SiteID] 1-to-many with ReadinessTasks, Risks and AI_Report_Checks on SiteID
+
+Snapshot Date = DATE ( 2026, 10, 23 )
+
+Overall Readiness % =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( ReadinessTasks ), ReadinessTasks[Status] = "Complete" ),
+    COUNTROWS ( ReadinessTasks )
+)
+
+On-plan Readiness % =
+VAR DueTasks = FILTER ( ReadinessTasks, ReadinessTasks[PlannedDate] <= [Snapshot Date] )
+RETURN
+    DIVIDE (
+        COUNTROWS ( FILTER ( DueTasks, ReadinessTasks[Status] = "Complete" ) ),
+        COUNTROWS ( DueTasks )
+    )
+
+Overdue Tasks =
+CALCULATE ( COUNTROWS ( ReadinessTasks ), ReadinessTasks[Status] = "Overdue" )
+
+Open High Risks =
+CALCULATE ( COUNTROWS ( Risks ), Risks[Status] = "Open", Risks[Severity] = "High" )
+
+Days to Go-Live =
+DATEDIFF ( [Snapshot Date], MAX ( Sites[PlannedGoLive] ), DAY )
+
+AI Report Error Rate =
+DIVIDE ( SUM ( AI_Report_Checks[ErrorsFound] ), SUM ( AI_Report_Checks[ClaimsChecked] ) )
+
+RAG Status =
+VAR OnPlan = [On-plan Readiness %]
+RETURN
+    SWITCH (
+        TRUE (),
+        ISBLANK ( OnPlan ), "Not due",
+        OnPlan >= 0.9 && [Open High Risks] = 0, "Green",
+        OnPlan >= 0.75, "Amber",
+        "Red"
+    )
