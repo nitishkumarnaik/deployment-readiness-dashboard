@@ -73,6 +73,7 @@ src/       data generation and dashboard build scripts
 docs/      the built dashboard (served by GitHub Pages)
 powerbi/   DAX measures for a Power BI version
 images/    screenshots
+kept-app/  Kept, a separate mobile app project (iOS + Android); see kept-app/README.md
 ```
 
 ## Author

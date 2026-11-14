@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Kept",
+    "slug": "kept",
+    "version": "1.0.0",
+    "scheme": "kept",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.example.kept",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.example.kept",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#1E6B58",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      [
+        "expo-notifications",
+        {
+          "color": "#1E6B58"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#F5F6F2",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0E1311"
+          }
+        }
+      ]
+    ]
+  }
+}
