@@ -73,7 +73,8 @@ src/       data generation and dashboard build scripts
 docs/      the built dashboard (served by GitHub Pages)
 powerbi/   DAX measures for a Power BI version
 images/    screenshots
-kept-app/  Kept, a separate mobile app project (iOS + Android); see kept-app/README.md
+kept-app/        Kept, a GLP-1 companion app (iOS + Android); see kept-app/README.md
+streakline-app/  Streakline, tap-to-log streaks + spaces + community (iOS + Android); see streakline-app/README.md
 ```
 
 ## Author
