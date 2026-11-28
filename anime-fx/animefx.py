@@ -258,8 +258,10 @@ def _scurve(c):
 
 class Look:
     def __init__(self, w, h, grade="vivid", glow=0.35, vignette=0.35, letterbox=False,
-                 grain=0.0, sharpen=0.5, seed=0):
+                 grain=0.0, sharpen=0.5, seed=0, clarity=0.0):
         self.grade, self.glow, self.grain, self.sharpen = grade, glow, grain, sharpen
+        self.clarity = clarity
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)) if clarity else None
         self.w, self.h = w, h
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
         r = np.sqrt(((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2) / math.sqrt(2)
@@ -290,6 +292,13 @@ class Look:
             red = np.clip((r - np.maximum(gr, b)) * 2.5, 0, 1)[..., None]
             x = l + (0.55 + 1.1 * red) * (x - l)
             x = np.clip((x - 0.06) / 0.94, 0, 1) ** 1.15          # crush blacks
+        elif g == "gothic":
+            # crimson cast: reds/skin keep colour, everything else drains, shadows go blood-red
+            b, gr, r = x[..., 0], x[..., 1], x[..., 2]
+            red = np.clip((r - np.maximum(gr, b)) * 2.5, 0, 1)[..., None]
+            x = l + (0.45 + 0.9 * red) * (x - l)
+            x += ((1 - l) ** 2) * np.array([-0.03, -0.04, 0.07], np.float32)
+            x = np.clip((x - 0.05) / 0.95, 0, 1) ** 1.12
         elif g == "cold":
             x = l + 0.8 * (x - l)
             x = x * np.array([1.12, 1.0, 0.86], np.float32) - 0.02
@@ -298,6 +307,12 @@ class Look:
         return np.clip(x * 255, 0, 255).astype(np.uint8)
 
     def __call__(self, f):
+        if self.clahe is not None:
+            # local contrast: makes muscle definition/texture read without an HDR look
+            lab = cv2.cvtColor(f, cv2.COLOR_BGR2LAB)
+            l2 = self.clahe.apply(lab[..., 0])
+            lab[..., 0] = cv2.addWeighted(lab[..., 0], 1 - self.clarity, l2, self.clarity, 0)
+            f = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         f = self._grade(f)
         if self.sharpen:
             bl = cv2.GaussianBlur(f, (0, 0), 1.2)
@@ -468,6 +483,9 @@ def build_plan(beats, clips, readers, args, style):
         end_lim = c["b"] if c["b"] is not None else r.dur
         if cursors[k] + span > end_lim:
             cursors[k] = c["a"]
+        if c["b"] is not None:
+            # never read past a pinned range: slow the shot down instead (reads as slow-mo)
+            span = min(span, max(0.05, end_lim - cursors[k]))
         segs.append({"t0": cuts[i], "t1": cuts[i + 1], "clip": k, "src": cursors[k], "span": span,
                      "trans": style["transitions"][i % len(style["transitions"])] if i else "cut",
                      "strong": round(cuts[i], 3) in strong_at})
@@ -496,10 +514,19 @@ def velocity_time(u, a):
 
 def cmd_edit(args):
     style = dict(STYLES[args.style])
-    for k in ("grade", "glow", "velocity", "speed"):
+    for k in ("grade", "glow", "velocity", "speed", "grain", "vignette"):
         v = getattr(args, k)
         if v is not None:
             style[k] = v
+    if args.transitions:
+        style["transitions"] = args.transitions.split(",")
+    if args.beat_fx is not None:
+        style["beat_fx"] = [x for x in args.beat_fx.split(",") if x]
+    if args.offbeat_shake is not None:
+        style["offbeat_shake"] = args.offbeat_shake
+    if args.no_invert:
+        style["invert_on_drop"] = False
+    switches = sorted((float(t), g) for t, g in (s.split(":") for s in args.grade_switch or []))
     w, h = map(int, args.size.lower().split("x"))
     fps = args.fps
     print(f"[animefx] beat tracking {args.music} ...", file=sys.stderr)
@@ -512,7 +539,9 @@ def cmd_edit(args):
     texts = [parse_text(s, w, h, args.font) for s in args.text or []]
     overlays = [Overlay(p, w, h, args.overlay_opacity) for p in args.overlay or []]
     look = Look(w, h, style["grade"], style["glow"], style["vignette"],
-                style.get("letterbox", False) and not args.no_letterbox, style["grain"], seed=args.seed)
+                style.get("letterbox", False) and not args.no_letterbox, style["grain"], seed=args.seed,
+                clarity=args.clarity, sharpen=args.sharpen)
+    base_grade = style["grade"]
     total = segs[-1]["t1"]
     tw = args.transition
     flash_color = style.get("flash_color", (255, 255, 255))
@@ -527,6 +556,15 @@ def cmd_edit(args):
         u = (t - s["t0"]) / (s["t1"] - s["t0"])
         src = s["src"] + s["span"] * velocity_time(u, style["velocity"])
         f = fill(readers[s["clip"]].frame_at(src), w, h)
+        if args.push:
+            # slow handheld push-in: every shot breathes like a real camera
+            ph = si * 1.7
+            f = _affine(f, 1 + args.push * (0.3 + u), 0.15 * math.sin(t * 1.3 + ph),
+                        w * 0.004 * math.sin(t * 0.9 + ph), h * 0.004 * math.cos(t * 1.1 + ph))
+        look.grade = base_grade
+        for st, g in switches:
+            if t >= st:
+                look.grade = g
         # transitions: outgoing tail of this segment / incoming head of next
         nxt = segs[si + 1] if si + 1 < len(segs) else None
         if nxt and s["t1"] - t < tw / 2:
@@ -561,6 +599,9 @@ def transition(f, kind, amt, out_going, idx, flash_color=(255, 255, 255)):
         return fx_tilt(f, amt, d if out_going else -d)
     if kind == "flash":
         return f if out_going else fx_flash(f, 1 - amt, 1.0, color=flash_color)
+    if kind == "dip":
+        # one or two pure-black frames on the cut
+        return np.zeros_like(f) if (not out_going and amt > 0.45) else f
     return f
 
 # ---------------------------------------------------------------- apply
@@ -670,7 +711,7 @@ def main():
     e.add_argument("--fps", type=int, default=30)
     e.add_argument("--cut-every", type=int, help="cut every N beats (default: auto ~0.55s shots)")
     e.add_argument("--transition", type=float, default=0.2, help="transition length (s)")
-    e.add_argument("--grade", choices=["vivid", "tealorange", "crimson", "cold", "mono", "none"])
+    e.add_argument("--grade", choices=["vivid", "tealorange", "crimson", "gothic", "cold", "mono", "none"])
     e.add_argument("--glow", type=float)
     e.add_argument("--velocity", type=float, help="speed-ramp depth 0..0.9")
     e.add_argument("--speed", type=float, help="average playback speed of source clips")
@@ -678,6 +719,17 @@ def main():
     e.add_argument("--no-letterbox", action="store_true")
     e.add_argument("--shuffle", action="store_true")
     e.add_argument("--seed", type=int, default=7)
+    e.add_argument("--transitions", help="comma list cycled per cut: cut,whip,zoom,tilt,flash,dip")
+    e.add_argument("--beat-fx", help="comma list of effects on strong beats ('' for none)")
+    e.add_argument("--offbeat-shake", type=float)
+    e.add_argument("--no-invert", action="store_true")
+    e.add_argument("--grade-switch", action="append", metavar="T:GRADE",
+                   help="change grade from time T, e.g. 4.5:gothic (repeatable)")
+    e.add_argument("--clarity", type=float, default=0.0, help="local contrast 0..1 (muscle definition)")
+    e.add_argument("--sharpen", type=float, default=0.5)
+    e.add_argument("--push", type=float, default=0.0, help="slow push-in per shot, e.g. 0.05")
+    e.add_argument("--grain", type=float)
+    e.add_argument("--vignette", type=float)
 
     a = sub.add_parser("apply", parents=[look_args], help="add effects/looks to an existing video")
     a.add_argument("input")
@@ -685,7 +737,7 @@ def main():
     a.add_argument("--music", help="replace audio with this track")
     a.add_argument("--auto-beats", action="store_true", help="add zoom/shake/rgb hits on detected beats")
     a.add_argument("--size")
-    a.add_argument("--grade", default="vivid", choices=["vivid", "tealorange", "crimson", "cold", "mono", "none"])
+    a.add_argument("--grade", default="vivid", choices=["vivid", "tealorange", "crimson", "gothic", "cold", "mono", "none"])
     a.add_argument("--glow", type=float, default=0.35)
     a.add_argument("--vignette", type=float, default=0.3)
     a.add_argument("--grain", type=float, default=0.0)
